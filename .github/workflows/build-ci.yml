@@ -1,0 +1,143 @@
+name: CI
+on:
+  pull_request:
+    branches:
+      # We only want to run our CI on pull requests to the access/** branches
+      - 'access/**'
+  workflow_dispatch:
+    inputs:
+      upstream-spack-packages-ref:
+        description: 'builtin spack-packages ref to use'
+        required: true
+        type: string
+      access-spack-packages-ref:
+        description: 'access-spack-packages ref to use'
+        required: true
+        type: string
+      spack-config-ref:
+        description: 'spack-config ref to use'
+        required: true
+        type: string
+      spack-ref:
+        description: 'spack ref to use'
+        required: true
+        type: string
+      run-self-hosted:
+        description: 'Use self-hosted runners for the test'
+        required: true
+        default: true
+        type: boolean
+# We don't want to overwhelm the runners with multiple commits in a PR.
+# So we will cancel any existing runs and only run the current HEAD of the branch
+concurrency:
+  group: build-ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  setup-ci:
+    name: Setup CI
+    runs-on: ubuntu-latest
+    # We run this in our runner container so we can effectively parse the git repository for each package via spack
+    container: ghcr.io/access-nri/build-ci-runner:rocky
+    env:
+      # Note, this needs to be updated in line with refs in the CI job below
+      BUILD_CI_WORKFLOW_VERSION: v3
+      # Which directory under access-nri/access-spack-packages contains the spack packages
+      ACCESS_SPACK_PACKAGES_ROOT_DIR: spack_repo/access/nri/packages
+    outputs:
+      # Matrices used in CI job
+      manifest-matrix: ${{ steps.set-manifest-matrix.outputs.matrix }}
+      exclude-matrix: ${{ steps.set-manifest-matrix.outputs.exclude-matrix }}
+      # packages repositories
+      builtin-spack-packages-ref: ${{ inputs.upstream-spack-packages-ref || github.event.pull_request.head.sha }}
+      access-spack-packages-ref: ${{ inputs.access-spack-packages-ref || steps.defaults.outputs.access-spack-packages-ref }}
+      # Global defaults for CI job
+      spack-config-ref: ${{ inputs.spack-config-ref || steps.defaults.outputs.spack-config-ref }}
+      spack-ref: ${{ inputs.spack-ref || steps.defaults.outputs.spack-ref }}
+    steps:
+      - name: Checkout upstream-spack-packages-ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref || inputs.upstream-spack-packages-ref }}
+
+      - name: Checkout access-spack-packages
+        uses: actions/checkout@v6
+        with:
+          repository: access-nri/access-spack-packages
+          ref: ${{ inputs.access-spack-packages-ref }}
+
+      - name: Get packages from access-spack-packages
+        id: access-spack-packages
+        run: |
+          pkgs=$(find ${{ env.ACCESS_SPACK_PACKAGES_ROOT_DIR }}/ -mindepth 1 -maxdepth 1 -type d -printf '%P ')
+
+          echo "Packages found in access-spack-packages: $pkgs"
+
+          echo "pkgs=$pkgs" >> $GITHUB_OUTPUT
+
+      - name: Setup Matrix
+        id: set-manifest-matrix
+        # Find all manifests defined in all packages MCRs (if applicable) or access-spack-packages if not found there
+        # Creates a matrix of the form: [{PACKAGE, MANIFEST_REPO, MANIFEST_REPO_REF, MANIFEST_PATH_IN_REPO}, ...]
+        uses: access-nri/access-spack-packages/.github/build-ci/actions/generate-manifest-matrix@api-v2
+        with:
+          packages: ${{ steps.access-spack-packages.outputs.pkgs }}
+          packages-root-dir: ${{ env.ACCESS_SPACK_PACKAGES_ROOT_DIR }}
+          token: ${{ secrets.SPACK_INSTALL_COMMAND_PAT }}
+
+      - name: Checkout build-ci
+        uses: actions/checkout@v6
+        with:
+          repository: access-nri/build-ci
+          ref: ${{ env.BUILD_CI_WORKFLOW_VERSION }}
+
+      - name: Get default refs from build-ci workflow
+        id: defaults
+        # GitHub does not treat empty-string inputs as eligible for substitution with a default
+        # Since we are supporting both workflow_dispatch and pull_request triggers, the entrypoint inputs need to be filled in
+        # So we are getting the default values from the workflow file itself, and passing them back into the workflow
+        run: |
+          default_spack_ref=$(yq '.on.workflow_call.inputs."spack-ref".default' .github/workflows/ci.yml)
+          default_spack_config_ref=$(yq '.on.workflow_call.inputs."spack-config-ref".default' .github/workflows/ci.yml)
+          default_access_spack_packages_ref=$(yq '.on.workflow_call.inputs."access-spack-packages-ref".default' .github/workflows/ci.yml)
+
+          echo "Default refs from ${{ env.BUILD_CI_WORKFLOW_VERSION }}: spack-ref=$default_spack_ref, spack-config-ref=$default_spack_config_ref, access-spack-packages-ref=$default_access_spack_packages_ref"
+
+          echo "spack-ref=$default_spack_ref" >> $GITHUB_OUTPUT
+          echo "spack-config-ref=$default_spack_config_ref" >> $GITHUB_OUTPUT
+          echo "access-spack-packages-ref=$default_access_spack_packages_ref" >> $GITHUB_OUTPUT
+
+  ci:
+    name: CI
+    needs:
+      - setup-ci
+    strategy:
+      fail-fast: false
+      max-parallel: 7
+      matrix:
+        # Respectively of the form:
+        #   [
+        #     {"template_value": "mom5", "repository": "ACCESS-NRI/MOM5", "ref": "master", "filepath": ".github/build-ci/manifests/intel.spack.yaml.j2"},
+        #     {"template_value": "mom5", "repository": "ACCESS-NRI/MOM5", "ref": "master", "filepath": ".github/build-ci/manifests/gcc.spack.yaml.j2"},
+        #     {"template_value": "datetime-fortran", "repository": "ACCESS-NRI/access-spack-packages", "ref": "api-v2", "filepath": ".github/build-ci/manifests/datetime-fortran/spack.yaml.j2"},
+        #     ...
+        #   ]
+        package: ${{ fromJson(needs.setup-ci.outputs.manifest-matrix) }}
+        # Exclude bundles and packages that can't build with build-ci
+        exclude: ${{ fromJson(needs.setup-ci.outputs.exclude-matrix) }}
+    uses: access-nri/build-ci/.github/workflows/ci.yml@v3
+    with:
+      spack-manifest-repository: ${{ matrix.package.repository }}
+      spack-manifest-repository-ref: ${{ matrix.package.ref }}
+      spack-manifest-path: ${{ matrix.package.filepath }}
+      spack-manifest-data-path: .github/build-ci/data/standard.json
+      spack-manifest-data-pairs: |-
+        package ${{ matrix.package.template_value }}
+      ref: ${{ matrix.package.ref }}
+      spack-config-ref: ${{ needs.setup-ci.outputs.spack-config-ref }}
+      spack-ref: ${{ needs.setup-ci.outputs.spack-ref }}
+      builtin-spack-packages-ref: ${{ needs.setup-ci.outputs.builtin-spack-packages-ref }}
+      access-spack-packages-ref: ${{ needs.setup-ci.outputs.access-spack-packages-ref }}
+      # Workflow dispatch can switch depending on cluster/GitHub resourcing, otherwise run self-hosted
+      run-self-hosted: ${{ inputs.run-self-hosted || true }}
+    secrets:
+      spack-install-command-pat: ${{ secrets.SPACK_INSTALL_COMMAND_PAT }}
