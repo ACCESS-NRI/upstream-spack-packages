@@ -46,6 +46,7 @@ jobs:
     outputs:
       # Matrices used in CI job
       manifest-matrix: ${{ steps.set-manifest-matrix.outputs.matrix }}
+      exclude-matrix: ${{ steps.set-manifest-matrix.outputs.exclude-matrix }}
       # packages repositories
       builtin-spack-packages-ref: ${{ inputs.upstream-spack-packages-ref || github.event.pull_request.head.sha }}
       access-spack-packages-ref: ${{ inputs.access-spack-packages-ref || steps.defaults.outputs.access-spack-packages-ref }}
@@ -120,29 +121,18 @@ jobs:
         #     {"template_value": "datetime-fortran", "repository": "ACCESS-NRI/access-spack-packages", "ref": "api-v2", "filepath": ".github/build-ci/manifests/datetime-fortran/spack.yaml.j2"},
         #     ...
         #   ]
-        manifest: ${{ fromJson(needs.setup-ci.outputs.manifest-matrix) }}
+        package: ${{ fromJson(needs.setup-ci.outputs.manifest-matrix) }}
         # Exclude bundles and packages that can't build with build-ci
-        exclude:
-          - manifest: {template_value: "access-om2"}
-          - manifest: {template_value: "access-om2-bgc"}
-          - manifest: {template_value: "access-om3"}
-          - manifest: {template_value: "access-esm1p5"}
-          - manifest: {template_value: "access-esm1p6"}
-          - manifest: {template_value: "access-am3"}
-          - manifest: {template_value: "access-ram3"}
-          - manifest: {template_value: "access-issm"}
-          - manifest: {template_value: "access-test"}
-          - manifest: {template_value: "coastri-roms"}
-          - manifest: {template_value: "gcom4"}
+        exclude: ${{ fromJson(needs.setup-ci.outputs.exclude-matrix) }}
     uses: access-nri/build-ci/.github/workflows/ci.yml@v3
     with:
-      spack-manifest-repository: ${{ matrix.manifest.repository }}
-      spack-manifest-repository-ref: ${{ matrix.manifest.ref }}
-      spack-manifest-path: ${{ matrix.manifest.filepath }}
+      spack-manifest-repository: ${{ matrix.package.repository }}
+      spack-manifest-repository-ref: ${{ matrix.package.ref }}
+      spack-manifest-path: ${{ matrix.package.filepath }}
       spack-manifest-data-path: .github/build-ci/data/standard.json
       spack-manifest-data-pairs: |-
-        package ${{ matrix.manifest.template_value }}
-      ref: ${{ matrix.manifest.ref }}
+        package ${{ matrix.package.template_value }}
+      ref: ${{ matrix.package.ref }}
       spack-config-ref: ${{ needs.setup-ci.outputs.spack-config-ref }}
       spack-ref: ${{ needs.setup-ci.outputs.spack-ref }}
       builtin-spack-packages-ref: ${{ needs.setup-ci.outputs.builtin-spack-packages-ref }}
