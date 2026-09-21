@@ -1,0 +1,2 @@
+repos:
+  builtin: $CALLER_REPOSITORY_PATH/repos/spack_repo/builtin
