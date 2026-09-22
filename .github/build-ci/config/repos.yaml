@@ -1,2 +1,6 @@
 repos:
+  # Note: We need to redeclare access_spack_packages above builtin in this scope, otherwise builtin will
+  # resolve to a higher precedence than our access_spack_packages, which errors out in some cases where
+  # we have our own implementation (eg. fiat). The actual git/branch/destination values are still taken from lower scopes.
+  access_spack_packages: {}
   builtin: $CALLER_REPOSITORY_PATH/repos/spack_repo/builtin
