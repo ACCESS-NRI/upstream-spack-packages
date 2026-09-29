@@ -43,11 +43,6 @@ jobs:
       spack-config-ref: ${{ inputs.spack-config-ref || steps.defaults.outputs.spack-config-ref }}
       spack-ref: ${{ inputs.spack-ref || steps.defaults.outputs.spack-ref }}
     steps:
-      - name: Checkout upstream-spack-packages-ref
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-
       - name: Checkout access-spack-packages
         uses: actions/checkout@v7
         with:
@@ -87,7 +82,7 @@ jobs:
           default_spack_ref=$(yq '.on.workflow_call.inputs."spack-ref".default' .github/workflows/ci.yml)
           default_spack_config_ref=$(yq '.on.workflow_call.inputs."spack-config-ref".default' .github/workflows/ci.yml)
 
-          echo "Default refs from ${{ env.BUILD_CI_WORKFLOW_VERSION }}: spack-ref=$default_spack_ref, spack-config-ref=$default_spack_config_ref, access-spack-packages-ref=$default_access_spack_packages_ref"
+          echo "Default refs from ${{ env.BUILD_CI_WORKFLOW_VERSION }}: spack-ref=$default_spack_ref, spack-config-ref=$default_spack_config_ref"
 
           echo "spack-ref=$default_spack_ref" >> $GITHUB_OUTPUT
           echo "spack-config-ref=$default_spack_config_ref" >> $GITHUB_OUTPUT
